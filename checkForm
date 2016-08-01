@@ -1,0 +1,257 @@
+/*
+*   1.InputDom类，进行输入框和select等表单验证
+*   2.提交AJAX公用方法
+*   3.首屏渲染数据获取公用方法
+*/
+
+
+/*
+*   全局变量（正则表达式等）
+*/
+
+var _RegBankCard = /^\d{16,19}$/;                           //银行卡号
+var _RegNameZH = new RegExp(/^[\u4e00-\u9fa5 ]{2,10}$/);    //中文姓名
+var _RegSafePassWord = /^[a-zA-Z\d!@#$%^&*.]{6,16}$/;       //安全密码
+
+var _AJAXUrl = '/tools/ssc_ajax.ashx';                  //AJAX目标地址
+var InputDomJson = {};                                  //存放页面input的dom节点
+var checkSubmitFlag = true;                             //表单标志，表单是否能提交
+
+var paraArr = [
+    'UserName' ,                     //返回对应的用户名,未登陆用户返回空字符串
+    'UserPhoto',                     //返回用户头像的图片地址,暂时还未开放头像功能
+    'UserHasSafePwd',                //返回是否已经设置安全密码,1为有,0为没有设置
+    'UserSafeQuestions',             //返回设置的密保问题,如果没设置可以返回0或者空数组
+    'UserBankCardNum',               //返回已经绑定的银行卡数量
+    'UserMobile',                    //返回已绑定手机的模糊状态,如未绑定,返回空字符串或0
+    'ActivityMoneyMobile',           //返回绑定手机能够获取的活动奖金
+    'ActivityRechargevitation',      //返回邀请新人成功能够获取的活动奖金
+    'UserSignDays',                  //获取连续登陆天数(可以不包含当天,这样可以缓存)
+    'UserSignToday',                 //今天是否已经签到
+    'UserFirstCardInfo'              //返回绑定的第一张银行卡的模糊信息
+]
+
+function InputDom($dom){                       //目前包含输入框和select
+    this.$dom = $dom || null;                           //本<input>的JQ对象
+    this.name = $dom.attr('name') || '';  //name
+    this.msgEmp = '';                                   //提示文字——输入为空
+    this.msgErr = '';                                   //提示文字——输入错误
+    this.msgRight = '信息填写正确';                     //提示文字——输入正确
+    this.reg = '';                                      //本<input>用以验证的正则表达式
+    this.val = this.$dom.val();                         //用于AJAX取值
+    this.isCorrect = false;                             //输入框的值是否可以提交
+    this.dataCheck = $dom.attr('data-check');
+}
+
+InputDom.prototype.sayProperty = function(){
+    console.log('name:' + this.name);
+    console.log('msgErr:' + this.msgErr);
+    console.log('msgEmp:' + this.msgEmp);
+    console.log('msgRight:' + this.msgRight);
+    console.log('reg:' + this.reg);
+    console.log( this.$dom);
+}
+
+InputDom.prototype.setValue = function(newValue){this.val = newValue;}
+InputDom.prototype.setMsg = function(msgEmp, msgErr, msgRight){
+    this.msgEmp = msgEmp;
+    this.msgErr = msgErr;
+    this.msgRight = msgRight;
+}
+
+//将各个组件的报错信息（msgErr,msgEmp),reg 绑定给inputDom
+InputDom.prototype.bindMsg = function(){
+    var name = this.name;
+    if(this.dataCheck){
+        this.msgErr = '两次输入的银行卡号不同';
+        this.msgEmp = '请再次输入银行卡号'
+    }else if(name.indexOf('BankNum') >= 0){
+        //这个地方移动端的命名还是‘BankCard’，看这个名字需不需要改，需要的话在这里修改
+        this.msgErr = '银行卡格式有误';
+        this.msgEmp = '请输入银行卡号';
+        this.reg = _RegBankCard;
+    }else if(name.indexOf('BankName') >= 0){
+        this.msgErr = '请选择开户银行';
+        this.msgEmp = '请选择开户银行';
+        this.reg = '';
+    }else if(name.indexOf('RealName') >= 0){
+        this.msgErr = '请正确输入中文姓名';
+        this.msgEmp = '请输入银行户名';
+        this.reg = _RegNameZH;
+    }else if(name.indexOf('SafePassWord') >= 0){
+        this.msgErr = '安全密码格式有误';
+        this.msgEmp = '请输入安全密码';
+        this.reg = _RegSafePassWord;
+    }
+}
+//将实例保存至InputDomJson中
+InputDom.prototype.saveDom = function(){
+    this.val = this.$dom.val();
+    InputDomJson[this.name] = this;
+}
+
+InputDom.prototype.check = function(){
+    var value = this.val;
+    if(value == ''  || value == undefined ){
+        this.isCorrect = false;                            
+        showErrMsg(this.$dom, this.msgEmp);                //展示（为空）
+    }else if(this.dataCheck){                              //所有用来校验密码、卡号的输入框，以data-check属性的方式来确定关系
+        var targetValue = $('input[name="' + this.dataCheck  + '"]').val(); 
+
+        this.$dom.on('paste',function(){                    //校验框禁用粘贴
+            return false;
+        })
+
+        if(value != targetValue){
+            this.isCorrect = false;                            
+            showErrMsg(this.$dom, this.msgErr);
+        }else{
+            this.isCorrect = true;
+            showRightMsg(this.$dom,this.msgRight);
+        }
+        //比较此输入框与那个输入框
+    }else if(this.$dom[0].tagName == 'SELECT'){
+        if(value == -1){
+            this.isCorrect = false;                            
+            showErrMsg(this.$dom, this.msgEmp);                 //展示（为空）
+        }else{
+            this.isCorrect = true;
+            showRightMsg(this.$dom,this.msgRight);             //展示（正确）
+        }
+        
+    }else if(!this.reg.test(value)){
+        this.isCorrect = false;
+        showErrMsg(this.$dom, this.msgErr);                //展示（错误）
+    }else{
+        this.isCorrect = true;
+        showRightMsg(this.$dom,this.msgRight);             //展示（正确）
+    }
+
+
+}
+
+//显示部分，后期可考虑封装
+//显示输入框错误的提示
+function showErrMsg($dom,msg){
+    $dom.next('em').text(msg).addClass('verifyWrong').removeClass('dpn verifyRight').prepend('<i></i>');
+}
+
+//显示正确的提示
+function showRightMsg($dom, msg){
+    $dom.next('em').text(msg).addClass('verifyRight').removeClass('dpn verifyWrong').prepend('<i></i>');
+}
+
+
+function radioUpdateDom(obj){           //单选框处理
+    if(InputDomJson[obj.name]){         //如果一个Name已经有值了，则返回
+        return;
+    }
+
+    InputDomJson[obj.name] = {
+        name:  obj.name,
+        val:   obj.value
+    };
+
+    function updateRadio(name){         //希望这部分以后可以用在多选框
+        $('input[name="'+ name+'"]').on('change', function(){
+            InputDomJson[name].val = $(this).val();
+        })
+    }
+    updateRadio(obj.name)           //创建监听事件
+}
+
+$.fn.addInputCheck = function(){
+    $(this).each(function(){
+        if((this.type == 'radio') || (this.type == 'checkbox') || (this.type == 'select')){     //  单选框、复选框、下拉框不涉及提示
+            radioUpdateDom(this);
+            return; 
+        } 
+        if(this.name == 'City'){
+            return;
+        }
+
+        var inputDom = new InputDom($(this));       //新建实例inputDom用以存放该节点的各种属性
+        inputDom.bindMsg();                         //根据name属性将报错信息（msgErr,msgEmp),reg 绑定给inputDom
+        inputDom.saveDom();                         //将Dom节点给DomJson
+
+
+        $(this).on({
+            blur: function(){
+                //输入框中如果有标签需要判断，在此处理
+                //进行输入框文本的判断
+                inputDom.check();
+            },
+
+            change: function(){
+                inputDom.saveDom();
+            }
+        })
+    })
+}
+
+
+$('input').addInputCheck();
+$('select').addInputCheck();
+// console.log(InputDomJson)
+
+/*
+*   提交按钮绑定点击事件
+*   1.检验InputDomJson中存储的表单数据是否正确，不正确则禁用表单提交，并显示报错信息
+*   2.使用data对象，从InputDomJson中获取提交数据
+*   3.AJAX提交
+*/
+$('.submitBtn').on('click', function(){
+    //检查每个输入框数据是否正确
+
+    var data = {};
+    var formCorrect = true;
+    for(var index  in InputDomJson){
+        if(InputDomJson[index].isCorrect == false){
+            if(InputDomJson[index].$dom){
+                showErrMsg(InputDomJson[index].$dom,InputDomJson[index].msgErr) 
+            }
+            formCorrect = false;
+        }          //如果表单中的数据不正确，则退出函数，阻止表单发送
+
+
+
+        if(InputDomJson[index].val){
+            if(!InputDomJson[index].dataCheck){
+                data[index] = InputDomJson[index].val;
+            }
+        }else{
+            data[index] = InputDomJson[index].value;
+        }
+
+        
+    }
+    if(formCorrect == false)return;                                 //如果表单数据格式不正确，禁用表单提交
+    if(checkSubmitFlag == false) return;                            //如果标志为false，禁用表单提交
+
+    
+
+    //正确则传数据到AJAX接口
+    checkSubmitFlag = false;    //禁用表单提交
+    data['Action'] = $(this).attr('data-action');
+    if($(this).attr('data-qort')){
+        data['Qort'] = $(this).attr('data-qort');
+    }
+    
+    console.log(data)
+    console.log(InputDomJson)
+    $.ajax({
+        type : 'POST',
+        url  : _AJAXUrl,
+        data : data,
+        dataType: "json",
+        success : function(result){
+            console.log(result),
+            // AJAX有返回时将提交表单按钮再次启用
+            checkSubmitFlag = true;
+        },
+        error : function(XMLHttpRequest, textStatus, errorThrown){
+            console.log('ajax err')
+        }
+    })
+
+})
